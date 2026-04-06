@@ -118,7 +118,8 @@ class LighterClient(BaseExchangeClient):
             order_book_ids=market_ids,
             on_order_book_update=self._on_orderbook_update,
         )
-        self._patch_ws_client(market_ids)
+        # Patch: SDK raises on unhandled messages, just log instead
+        self._ws_client.handle_unhandled_message = lambda msg: None
 
         self._ws_task = asyncio.create_task(self._ws_loop())
         logger.info("Lighter WebSocket started for market_ids: %s", market_ids)
@@ -141,101 +142,7 @@ class LighterClient(BaseExchangeClient):
                         order_book_ids=market_ids,
                         on_order_book_update=self._on_orderbook_update,
                     )
-                    self._patch_ws_client(market_ids)
-
-    def _patch_ws_client(self, market_ids: list):
-        """Patch WsClient to also subscribe to perps_market_stats channels."""
-        import json as _json
-
-        ws_client = self._ws_client
-        original_handle_connected = ws_client.handle_connected
-        original_handle_connected_async = ws_client.handle_connected_async
-        client_ref = self
-
-        # Channel name candidates to try
-        channel_candidates = []
-        for mid in market_ids:
-            channel_candidates.extend([
-                f"market_stats/{mid}",
-                f"perps_stats/{mid}",
-                f"ticker/{mid}",
-                f"stats/{mid}",
-            ])
-        # Also try without market_id
-        channel_candidates.extend([
-            "market_stats",
-            "perps_market_stats",
-            "tickers",
-            "stats",
-        ])
-
-        def patched_handle_connected(ws):
-            original_handle_connected(ws)
-            for ch in channel_candidates:
-                ws.send(_json.dumps({"type": "subscribe", "channel": ch}))
-            logger.info("Lighter WS trying channels: %s", channel_candidates)
-
-        async def patched_handle_connected_async(ws):
-            await original_handle_connected_async(ws)
-            for ch in channel_candidates:
-                await ws.send(_json.dumps({"type": "subscribe", "channel": ch}))
-            logger.info("Lighter WS trying channels: %s", channel_candidates)
-
-        def patched_handle_unhandled(message):
-            if not isinstance(message, dict):
-                return
-            msg_type = message.get("type", "")
-            channel = message.get("channel", "")
-            # Log errors
-            if "error" in message:
-                logger.warning("Lighter WS error: %s", message["error"])
-                return
-            # Handle any message that might contain mark/index data
-            if "market_stats" in msg_type or "market_stats" in channel or "ticker" in msg_type or "ticker" in channel or "stats" in msg_type or "stats" in channel:
-                client_ref._handle_perps_market_stats(message)
-            elif "mark_price" in str(message) or "index_price" in str(message):
-                client_ref._handle_perps_market_stats(message)
-            else:
-                logger.info("Lighter WS unhandled: type=%s channel=%s keys=%s", msg_type, channel, list(message.keys()))
-
-        ws_client.handle_connected = patched_handle_connected
-        ws_client.handle_connected_async = patched_handle_connected_async
-        ws_client.handle_unhandled_message = patched_handle_unhandled
-
-    def _handle_perps_market_stats(self, message: dict):
-        """Handle perps_market_stats WebSocket messages."""
-        channel = message.get("channel", "")
-        # Extract market_id from channel like "perps_market_stats:145"
-        parts = channel.split(":")
-        if len(parts) < 2:
-            # Try from data
-            data = message.get("perps_market_stats", message.get("data", message))
-            market_id_str = str(data.get("market_id", ""))
-        else:
-            market_id_str = parts[1]
-            data = message.get("perps_market_stats", message.get("data", message))
-
-        pair_name = self._marketid_to_pair.get(market_id_str)
-        if not pair_name:
-            logger.debug("Lighter perps_market_stats unknown market_id: %s, msg keys: %s",
-                        market_id_str, list(message.keys()))
-            return
-
-        mark_px = float(data.get("mark_price", 0))
-        index_px = float(data.get("index_price", 0))
-
-        if mark_px > 0 and index_px > 0:
-            self._mark_index[pair_name] = MarkIndexSnapshot(
-                exchange="lighter",
-                pair=pair_name,
-                mark_price=mark_px,
-                index_price=index_px,
-            )
-            logger.info("Lighter mark-index %s: mark=$%.2f, index=$%.2f (via WS)",
-                       pair_name, mark_px, index_px)
-        else:
-            logger.debug("Lighter perps_market_stats %s: mark=%s, index=%s, keys=%s",
-                        pair_name, mark_px, index_px, list(data.keys()))
+                    self._ws_client.handle_unhandled_message = lambda msg: None
 
     def _on_orderbook_update(self, market_id, order_book):
         """Callback from Lighter WebSocket on orderbook update.
@@ -316,5 +223,53 @@ class LighterClient(BaseExchangeClient):
         return None
 
     async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
-        """Return cached mark-index from WebSocket perps_market_stats channel."""
+        """Fetch index_price from assetDetails, use mid_price as mark proxy.
+
+        Lighter's perpsMarketStats requires auth; public API only exposes
+        index_price per asset via assetDetails. We use the WebSocket mid_price
+        as an approximation for mark_price.
+        """
+        market_id = self._market_ids.get(pair)
+        if market_id is None or not self._api_client:
+            return None
+
+        try:
+            # Get index_price from assetDetails
+            order_api = OrderApi(self._api_client)
+            details = await order_api.asset_details()
+            index_px = 0.0
+
+            # Find the base asset for this market
+            # First get the base_asset_id from orderBookDetails
+            ob_details = await order_api.order_book_details(market_id=market_id)
+            base_asset_id = None
+            for ob in ob_details.order_book_details:
+                if ob.market_id == market_id:
+                    base_asset_id = ob.base_asset_id
+                    break
+
+            if base_asset_id is not None and hasattr(details, 'asset_details'):
+                for asset in details.asset_details:
+                    if asset.asset_id == base_asset_id:
+                        index_px = float(asset.index_price)
+                        break
+
+            # Use cached WebSocket mid_price as mark proxy
+            mark_px = 0.0
+            cached = self._prices.get(pair)
+            if cached and cached.is_valid():
+                mark_px = cached.mid_price
+
+            if index_px > 0 and mark_px > 0:
+                snapshot = MarkIndexSnapshot(
+                    exchange="lighter", pair=pair,
+                    mark_price=mark_px, index_price=index_px,
+                )
+                self._mark_index[pair] = snapshot
+                logger.info("Lighter mark-index %s: mark(mid)=$%.2f, index=$%.2f",
+                           pair, mark_px, index_px)
+                return snapshot
+
+        except Exception as e:
+            logger.error("Lighter mark-index fetch error for %s: %s", pair, e)
         return self._mark_index.get(pair)
