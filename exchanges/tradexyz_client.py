@@ -178,14 +178,18 @@ class TradeXYZClient(BaseExchangeClient):
         # Extract coin name without prefix (e.g., "xyz:CL" -> "CL")
         coin_name = coin.split(":")[-1] if ":" in coin else coin
 
+        all_names = [meta.get("name", "") for meta in universe]
+        logger.debug("trade.xyz metaAndAssetCtxs universe names: %s", all_names[:20])
+
         for meta, ctx in zip(universe, asset_ctxs):
             if meta.get("name", "").upper() == coin_name.upper():
                 rate = float(ctx.get("funding", 0))
-                # Update cached price with funding rate
                 if pair in self._prices:
                     self._prices[pair].funding_rate = rate
+                logger.info("trade.xyz funding %s: %s (hourly)", pair, rate)
                 return rate
 
+        logger.warning("trade.xyz funding not found for %s (looking for %s)", pair, coin_name)
         return None
 
     async def fetch_price_rest(self, pair: str) -> Optional[PriceSnapshot]:

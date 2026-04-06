@@ -122,10 +122,21 @@ class SpreadMonitor:
         while True:
             for pair_name in PAIRS:
                 try:
-                    await asyncio.gather(
+                    results = await asyncio.gather(
                         self.tradexyz.fetch_funding_rate(pair_name),
                         self.lighter.fetch_funding_rate(pair_name),
                         return_exceptions=True,
+                    )
+                    txyz_rate, ltr_rate = results
+                    if isinstance(txyz_rate, Exception):
+                        logger.error("trade.xyz funding error for %s: %s", pair_name, txyz_rate)
+                        txyz_rate = None
+                    if isinstance(ltr_rate, Exception):
+                        logger.error("Lighter funding error for %s: %s", pair_name, ltr_rate)
+                        ltr_rate = None
+                    logger.info(
+                        "Funding rates %s: trade.xyz=%s, Lighter=%s",
+                        pair_name, txyz_rate, ltr_rate,
                     )
                 except Exception as e:
                     logger.error("Funding fetch error for %s: %s", pair_name, e)

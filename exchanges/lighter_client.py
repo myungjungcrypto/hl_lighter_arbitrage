@@ -196,13 +196,24 @@ class LighterClient(BaseExchangeClient):
 
         try:
             funding_api = FundingApi(self._api_client)
-            result = await funding_api.funding_rates(market_id=market_id)
-            if result and hasattr(result, 'funding_rates') and result.funding_rates:
-                latest = result.funding_rates[-1]
-                rate = float(latest.rate) if hasattr(latest, 'rate') else 0.0
-                if pair in self._prices:
-                    self._prices[pair].funding_rate = rate
-                return rate
+            result = await funding_api.funding_rates()
+            if result and result.funding_rates:
+                # Filter by market_id and exchange="lighter"
+                for fr in result.funding_rates:
+                    if fr.market_id == market_id and fr.exchange == "lighter":
+                        rate = float(fr.rate)
+                        if pair in self._prices:
+                            self._prices[pair].funding_rate = rate
+                        logger.debug("Lighter funding %s: %s", pair, rate)
+                        return rate
+                # Fallback: any exchange for this market_id
+                for fr in result.funding_rates:
+                    if fr.market_id == market_id:
+                        rate = float(fr.rate)
+                        if pair in self._prices:
+                            self._prices[pair].funding_rate = rate
+                        logger.debug("Lighter funding %s (exchange=%s): %s", pair, fr.exchange, rate)
+                        return rate
         except Exception as e:
             logger.error("Lighter funding fetch error for %s: %s", pair, e)
         return None
