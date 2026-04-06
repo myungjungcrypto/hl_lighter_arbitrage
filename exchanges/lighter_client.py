@@ -263,7 +263,7 @@ class LighterClient(BaseExchangeClient):
                                                pair, mark_px, index_px)
                                     return snapshot
                                 # Log available keys for debugging
-                                logger.debug("Lighter orderBookDetails keys for %s: %s",
+                                logger.info("Lighter orderBookDetails keys for %s: %s",
                                             pair, list(d.keys()))
 
                 # Strategy 2: perpsMarketStats
@@ -290,7 +290,7 @@ class LighterClient(BaseExchangeClient):
                                                pair, endpoint, mark_px, index_px)
                                     return snapshot
                         else:
-                            logger.debug("Lighter %s HTTP %s", endpoint, resp.status)
+                            logger.info("Lighter %s HTTP %s", endpoint, resp.status)
 
         except Exception as e:
             logger.error("Lighter mark-index fetch error for %s: %s", pair, e)
