@@ -175,21 +175,25 @@ class TradeXYZClient(BaseExchangeClient):
         universe = data[0].get("universe", [])
         asset_ctxs = data[1]
 
-        # Extract coin name without prefix (e.g., "xyz:CL" -> "CL")
         coin_name = coin.split(":")[-1] if ":" in coin else coin
 
         all_names = [meta.get("name", "") for meta in universe]
-        logger.debug("trade.xyz metaAndAssetCtxs universe names: %s", all_names[:20])
+        logger.info("trade.xyz universe names (first 20): %s", all_names[:20])
 
         for meta, ctx in zip(universe, asset_ctxs):
-            if meta.get("name", "").upper() == coin_name.upper():
+            name = meta.get("name", "").upper()
+            # Try full match (e.g. "CL"), then with prefix (e.g. "xyz:CL")
+            if name == coin_name.upper() or name == coin.upper():
                 rate = float(ctx.get("funding", 0))
                 if pair in self._prices:
                     self._prices[pair].funding_rate = rate
-                logger.info("trade.xyz funding %s: %s (hourly)", pair, rate)
+                logger.info("trade.xyz funding %s: %s (matched name=%s)", pair, rate, meta.get("name"))
                 return rate
 
-        logger.warning("trade.xyz funding not found for %s (looking for %s)", pair, coin_name)
+        logger.warning(
+            "trade.xyz funding not found for %s (looking for '%s' or '%s' in %s)",
+            pair, coin_name, coin, all_names[:10],
+        )
         return None
 
     async def fetch_price_rest(self, pair: str) -> Optional[PriceSnapshot]:
