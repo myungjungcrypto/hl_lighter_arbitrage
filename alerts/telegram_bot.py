@@ -89,23 +89,24 @@ class TelegramAlertBot:
                     pass
 
             if snapshot and snapshot.is_valid():
+                direction_text = _direction_label(snapshot)
                 lines.append(
-                    f"\n<b>{pair_name}</b> {mute_icon}\n"
-                    f"  trade.xyz: ${snapshot.tradexyz.best_bid:.2f} / ${snapshot.tradexyz.best_ask:.2f}\n"
-                    f"  Lighter:   ${snapshot.lighter.best_bid:.2f} / ${snapshot.lighter.best_ask:.2f}\n"
-                    f"  Spread: <b>${snapshot.best_spread:+.2f}</b> ({snapshot.spread_pct:+.2f}%)\n"
-                    f"  방향: {snapshot.signal_text}\n"
+                    f"\n<b>{pair_name}</b> {mute_icon} ({direction_text})\n"
+                    f"  trade.xyz: bid ${snapshot.tradexyz.best_bid:.2f} / ask ${snapshot.tradexyz.best_ask:.2f}\n"
+                    f"  Lighter: bid ${snapshot.lighter.best_bid:.2f} / ask ${snapshot.lighter.best_ask:.2f}\n"
+                    f"  스프레드: <b>${snapshot.best_spread:+.2f}</b> ({snapshot.spread_pct:+.2f}%)"
                 )
-                if snapshot.funding_diff is not None:
-                    lines.append(f"  펀딩비 차이: {snapshot.funding_diff:.6f}\n")
-                if snapshot.breakeven_hours is not None:
-                    lines.append(f"  손익분기: {snapshot.breakeven_hours:.1f}시간\n")
+                funding_line = _funding_line(snapshot)
+                if funding_line:
+                    lines.append(f"\n  {funding_line}")
+                be_line = _breakeven_line(snapshot)
+                if be_line:
+                    lines.append(f"\n  {be_line} | 임계값: ${ps.threshold:.2f} | 쿨다운: {user.cooldown}s")
+                else:
+                    lines.append(f"\n  임계값: ${ps.threshold:.2f} | 쿨다운: {user.cooldown}s")
             else:
                 lines.append(f"\n<b>{pair_name}</b> {mute_icon} — 가격 데이터 없음\n")
-
-            lines.append(
-                f"  임계값: ${ps.threshold:.2f} | 쿨다운: {user.cooldown}초"
-            )
+                lines.append(f"  임계값: ${ps.threshold:.2f} | 쿨다운: {user.cooldown}s")
 
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -218,18 +219,20 @@ class TelegramAlertBot:
             icon = "⚠️"
             header = "방향 전환 알림"
 
+        direction_text = _direction_label(snapshot)
         text = (
-            f"{icon} <b>{header}: {snapshot.pair}</b>\n\n"
-            f"trade.xyz: ${snapshot.tradexyz.best_bid:.2f} / ${snapshot.tradexyz.best_ask:.2f}\n"
-            f"Lighter:   ${snapshot.lighter.best_bid:.2f} / ${snapshot.lighter.best_ask:.2f}\n\n"
-            f"스프레드: <b>${snapshot.best_spread:+.2f}</b> ({snapshot.spread_pct:+.2f}%)\n"
-            f"방향: {snapshot.signal_text}\n"
+            f"{icon} <b>{header}: {snapshot.pair}</b> ({direction_text})\n\n"
+            f"  trade.xyz: bid ${snapshot.tradexyz.best_bid:.2f} / ask ${snapshot.tradexyz.best_ask:.2f}\n"
+            f"  Lighter: bid ${snapshot.lighter.best_bid:.2f} / ask ${snapshot.lighter.best_ask:.2f}\n"
+            f"  스프레드: <b>${snapshot.best_spread:+.2f}</b> ({snapshot.spread_pct:+.2f}%)\n"
         )
 
-        if snapshot.funding_diff is not None:
-            text += f"펀딩비 차이: {snapshot.funding_diff:.6f}\n"
-        if snapshot.breakeven_hours is not None:
-            text += f"손익분기: {snapshot.breakeven_hours:.1f}시간\n"
+        funding_line = _funding_line(snapshot)
+        if funding_line:
+            text += f"  {funding_line}\n"
+        be_line = _breakeven_line(snapshot)
+        if be_line:
+            text += f"  {be_line}\n"
 
         try:
             await self._app.bot.send_message(
@@ -258,3 +261,31 @@ class TelegramAlertBot:
 def _sanitize_token(text: str) -> str:
     """Remove bot token from error messages."""
     return re.sub(r"bot\d+:[A-Za-z0-9_-]+", "bot***:***", text)
+
+
+def _direction_label(snapshot: SpreadSnapshot) -> str:
+    """e.g. 'Lighter 숏 + trade.xyz 롱'"""
+    if snapshot.best_direction == "LIGHTER_CHEAP":
+        return "Lighter 롱 + trade.xyz 숏"
+    return "trade.xyz 롱 + Lighter 숏"
+
+
+def _funding_line(snapshot: SpreadSnapshot) -> str:
+    """Format funding rates like: 펀딩(1h) trade.xyz: +0.0794% | Lighter: +0.0003%"""
+    txyz_fr = snapshot.tradexyz.funding_rate
+    ltr_fr = snapshot.lighter.funding_rate
+    if txyz_fr is None and ltr_fr is None:
+        return ""
+    txyz_str = f"{txyz_fr * 100:+.4f}%" if txyz_fr is not None else "N/A"
+    ltr_str = f"{ltr_fr * 100:+.4f}%" if ltr_fr is not None else "N/A"
+    return f"펀딩(1h) trade.xyz: {txyz_str} | Lighter: {ltr_str}"
+
+
+def _breakeven_line(snapshot: SpreadSnapshot) -> str:
+    """Format breakeven hours like: 손익분기: ⏰ 7h38m"""
+    beh = snapshot.breakeven_hours
+    if beh is None:
+        return ""
+    hours = int(beh)
+    minutes = int((beh - hours) * 60)
+    return f"손익분기: ⏰ {hours}h{minutes:02d}m"
