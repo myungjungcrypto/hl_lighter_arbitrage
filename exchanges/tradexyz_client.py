@@ -127,7 +127,7 @@ class TradeXYZClient(BaseExchangeClient):
             logger.debug("trade.xyz zero price for %s: bid=%s ask=%s", pair_name, best_bid, best_ask)
             return
 
-        logger.info("trade.xyz price update: %s bid=$%.2f ask=$%.2f", pair_name, best_bid, best_ask)
+        logger.debug("trade.xyz price update: %s bid=$%.2f ask=$%.2f", pair_name, best_bid, best_ask)
 
         self._prices[pair_name] = PriceSnapshot(
             exchange="tradexyz",

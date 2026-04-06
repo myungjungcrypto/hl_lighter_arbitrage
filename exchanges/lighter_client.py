@@ -188,7 +188,7 @@ class LighterClient(BaseExchangeClient):
             funding_rate=existing.funding_rate,
             timestamp=time.time(),
         )
-        logger.info(
+        logger.debug(
             "Lighter price update: %s bid=$%.2f ask=$%.2f",
             pair_name, best_bid, best_ask,
         )

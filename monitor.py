@@ -86,6 +86,11 @@ class SpreadMonitor:
         # Log to CSV
         self._log_csv(snapshot)
 
+        # Ignore direction changes when spread is too small (noise zone)
+        MIN_SPREAD_FOR_DIRECTION = 0.05  # $0.05 minimum to track direction
+        if abs(snapshot.best_spread) < MIN_SPREAD_FOR_DIRECTION:
+            return
+
         # Check for direction reversal (exit signal)
         prev_direction = self._last_direction.get(pair)
         is_reversal = prev_direction is not None and prev_direction != direction
@@ -101,15 +106,16 @@ class SpreadMonitor:
             if pair_settings.muted:
                 continue
 
-            # Direction reversal → immediate exit alert (skip cooldown)
-            if is_reversal:
+            time_since_last = now - pair_settings.last_alert_time
+
+            # Direction reversal → exit alert (with 60s minimum cooldown)
+            if is_reversal and time_since_last >= 60:
                 await self.telegram.send_alert(user.chat_id, snapshot, alert_type="exit")
                 await self.user_store.update_last_alert_time(user.chat_id, pair, now)
                 continue
 
             # Entry alert: check threshold and cooldown
             if abs(snapshot.best_spread) >= pair_settings.threshold:
-                time_since_last = now - pair_settings.last_alert_time
                 if time_since_last >= user.cooldown:
                     await self.telegram.send_alert(user.chat_id, snapshot, alert_type="entry")
                     await self.user_store.update_last_alert_time(user.chat_id, pair, now)
