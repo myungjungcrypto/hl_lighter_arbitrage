@@ -223,53 +223,7 @@ class LighterClient(BaseExchangeClient):
         return None
 
     async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
-        """Fetch index_price from assetDetails, use mid_price as mark proxy.
-
-        Lighter's perpsMarketStats requires auth; public API only exposes
-        index_price per asset via assetDetails. We use the WebSocket mid_price
-        as an approximation for mark_price.
+        """Lighter public API does not expose mark/index prices.
+        perpsMarketStats REST returns 403, WS channels are invalid.
         """
-        market_id = self._market_ids.get(pair)
-        if market_id is None or not self._api_client:
-            return None
-
-        try:
-            # Get index_price from assetDetails
-            order_api = OrderApi(self._api_client)
-            details = await order_api.asset_details()
-            index_px = 0.0
-
-            # Find the base asset for this market
-            # First get the base_asset_id from orderBookDetails
-            ob_details = await order_api.order_book_details(market_id=market_id)
-            base_asset_id = None
-            for ob in ob_details.order_book_details:
-                if ob.market_id == market_id:
-                    base_asset_id = ob.base_asset_id
-                    break
-
-            if base_asset_id is not None and hasattr(details, 'asset_details'):
-                for asset in details.asset_details:
-                    if asset.asset_id == base_asset_id:
-                        index_px = float(asset.index_price)
-                        break
-
-            # Use cached WebSocket mid_price as mark proxy
-            mark_px = 0.0
-            cached = self._prices.get(pair)
-            if cached and cached.is_valid():
-                mark_px = cached.mid_price
-
-            if index_px > 0 and mark_px > 0:
-                snapshot = MarkIndexSnapshot(
-                    exchange="lighter", pair=pair,
-                    mark_price=mark_px, index_price=index_px,
-                )
-                self._mark_index[pair] = snapshot
-                logger.info("Lighter mark-index %s: mark(mid)=$%.2f, index=$%.2f",
-                           pair, mark_px, index_px)
-                return snapshot
-
-        except Exception as e:
-            logger.error("Lighter mark-index fetch error for %s: %s", pair, e)
-        return self._mark_index.get(pair)
+        return None
