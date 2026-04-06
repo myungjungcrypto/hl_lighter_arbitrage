@@ -152,21 +152,34 @@ class LighterClient(BaseExchangeClient):
         original_handle_connected_async = ws_client.handle_connected_async
         client_ref = self
 
+        # Channel name candidates to try
+        channel_candidates = []
+        for mid in market_ids:
+            channel_candidates.extend([
+                f"market_stats/{mid}",
+                f"perps_stats/{mid}",
+                f"ticker/{mid}",
+                f"stats/{mid}",
+            ])
+        # Also try without market_id
+        channel_candidates.extend([
+            "market_stats",
+            "perps_market_stats",
+            "tickers",
+            "stats",
+        ])
+
         def patched_handle_connected(ws):
             original_handle_connected(ws)
-            for mid in market_ids:
-                ws.send(_json.dumps({
-                    "type": "subscribe",
-                    "channel": f"perps_market_stats/{mid}",
-                }))
-            logger.info("Lighter WS subscribed to perps_market_stats for %s", market_ids)
+            for ch in channel_candidates:
+                ws.send(_json.dumps({"type": "subscribe", "channel": ch}))
+            logger.info("Lighter WS trying channels: %s", channel_candidates)
 
         async def patched_handle_connected_async(ws):
             await original_handle_connected_async(ws)
-            for mid in market_ids:
-                await ws.send(_json.dumps({
-                    "type": "subscribe",
-                    "channel": f"perps_market_stats/{mid}",
+            for ch in channel_candidates:
+                await ws.send(_json.dumps({"type": "subscribe", "channel": ch}))
+            logger.info("Lighter WS trying channels: %s", channel_candidates)
                 }))
             logger.info("Lighter WS subscribed to perps_market_stats for %s", market_ids)
 
@@ -179,8 +192,10 @@ class LighterClient(BaseExchangeClient):
             if "error" in message:
                 logger.warning("Lighter WS error: %s", message["error"])
                 return
-            # Handle perps_market_stats subscribe + update
-            if "perps_market_stats" in msg_type or "perps_market_stats" in channel or "market_stats" in msg_type or "market_stats" in channel:
+            # Handle any message that might contain mark/index data
+            if "market_stats" in msg_type or "market_stats" in channel or "ticker" in msg_type or "ticker" in channel or "stats" in msg_type or "stats" in channel:
+                client_ref._handle_perps_market_stats(message)
+            elif "mark_price" in str(message) or "index_price" in str(message):
                 client_ref._handle_perps_market_stats(message)
             else:
                 logger.info("Lighter WS unhandled: type=%s channel=%s keys=%s", msg_type, channel, list(message.keys()))
