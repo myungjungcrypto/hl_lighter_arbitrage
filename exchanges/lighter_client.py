@@ -175,6 +175,10 @@ class LighterClient(BaseExchangeClient):
                 return
             msg_type = message.get("type", "")
             channel = message.get("channel", "")
+            # Log errors
+            if "error" in message:
+                logger.warning("Lighter WS error: %s", message["error"])
+                return
             # Handle perps_market_stats subscribe + update
             if "perps_market_stats" in msg_type or "perps_market_stats" in channel or "market_stats" in msg_type or "market_stats" in channel:
                 client_ref._handle_perps_market_stats(message)
