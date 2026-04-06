@@ -66,8 +66,8 @@ class LighterClient(BaseExchangeClient):
         if self._api_client:
             try:
                 await self._api_client.close()
-            except Exception:
-                pass
+            except (RuntimeError, Exception):
+                pass  # event loop may already be closed
 
     def get_latest_price(self, pair: str) -> Optional[PriceSnapshot]:
         return self._prices.get(pair)
@@ -117,6 +117,10 @@ class LighterClient(BaseExchangeClient):
             order_book_ids=market_ids,
             on_order_book_update=self._on_orderbook_update,
         )
+        # Patch: SDK raises on unhandled messages, just log instead
+        self._ws_client.handle_unhandled_message = lambda msg: logger.debug(
+            "Lighter WS unhandled: %s", msg.get("type", msg) if isinstance(msg, dict) else msg
+        )
 
         self._ws_task = asyncio.create_task(self._ws_loop())
         logger.info("Lighter WebSocket started for market_ids: %s", market_ids)
@@ -138,6 +142,9 @@ class LighterClient(BaseExchangeClient):
                     self._ws_client = lighter.WsClient(
                         order_book_ids=market_ids,
                         on_order_book_update=self._on_orderbook_update,
+                    )
+                    self._ws_client.handle_unhandled_message = lambda msg: logger.debug(
+                        "Lighter WS unhandled: %s", msg.get("type", msg) if isinstance(msg, dict) else msg
                     )
 
     def _on_orderbook_update(self, market_id, order_book):

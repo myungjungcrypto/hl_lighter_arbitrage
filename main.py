@@ -67,10 +67,22 @@ async def main():
             logger.error("Unexpected error: %s", e, exc_info=True)
         finally:
             logger.info("Cleaning up...")
-            await app.updater.stop()
-            await app.stop()
-            await tradexyz.close()
-            await lighter.close()
+            try:
+                await app.updater.stop()
+            except Exception:
+                pass
+            try:
+                await app.stop()
+            except Exception:
+                pass
+            try:
+                await tradexyz.close()
+            except Exception:
+                pass
+            try:
+                await lighter.close()
+            except Exception:
+                pass
             logger.info("Cleanup complete.")
 
 
