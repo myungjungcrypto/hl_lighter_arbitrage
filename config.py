@@ -18,9 +18,12 @@ PAIRS = {
     "BRENT": {"tradexyz": "xyz:BRENTOIL", "lighter": "BRENTOIL"},
 }
 
-# Alert Defaults
+# Spread Alert Defaults
 DEFAULT_THRESHOLD = float(os.getenv("DEFAULT_THRESHOLD", "0.50"))
 DEFAULT_COOLDOWN = int(os.getenv("DEFAULT_COOLDOWN", "300"))
+
+# Mark-Index Alert Defaults
+DEFAULT_MARK_INDEX_COOLDOWN = int(os.getenv("DEFAULT_MARK_INDEX_COOLDOWN", "300"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 FUNDING_FETCH_INTERVAL = int(os.getenv("FUNDING_FETCH_INTERVAL", "60"))
 

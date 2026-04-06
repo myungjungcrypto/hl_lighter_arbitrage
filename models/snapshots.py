@@ -88,3 +88,29 @@ class SpreadSnapshot:
 
     def is_valid(self) -> bool:
         return self.tradexyz.is_valid() and self.lighter.is_valid()
+
+
+@dataclass
+class MarkIndexSnapshot:
+    exchange: str  # "tradexyz" or "lighter"
+    pair: str  # "WTI" or "BRENT"
+    mark_price: float = 0.0
+    index_price: float = 0.0
+    timestamp: float = field(default_factory=time.time)
+
+    @property
+    def gap_pct(self) -> float:
+        """|mark - index| / index * 100"""
+        if self.index_price == 0:
+            return 0.0
+        return abs(self.mark_price - self.index_price) / self.index_price * 100
+
+    @property
+    def gap_signed_pct(self) -> float:
+        """(mark - index) / index * 100 (signed)"""
+        if self.index_price == 0:
+            return 0.0
+        return (self.mark_price - self.index_price) / self.index_price * 100
+
+    def is_valid(self) -> bool:
+        return self.mark_price > 0 and self.index_price > 0

@@ -15,7 +15,7 @@ import websockets
 
 from config import TRADEXYZ_API_URL, TRADEXYZ_WS_URL, PAIRS
 from exchanges.base import BaseExchangeClient
-from models.snapshots import PriceSnapshot
+from models.snapshots import PriceSnapshot, MarkIndexSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ class TradeXYZClient(BaseExchangeClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws_task: asyncio.Task | None = None
         self._prices: dict[str, PriceSnapshot] = {}
+        self._mark_index: dict[str, MarkIndexSnapshot] = {}
         self._running = False
         self._on_price_update: Callable[[str], None] | None = None
 
@@ -161,40 +162,60 @@ class TradeXYZClient(BaseExchangeClient):
             logger.error("trade.xyz info request error: %s", e)
             return None
 
-    async def fetch_funding_rate(self, pair: str) -> Optional[float]:
+    async def _fetch_meta_data(self) -> dict | list | None:
+        """Fetch metaAndAssetCtxs once, reused by funding + mark-index."""
+        return await self._post_info({"type": "metaAndAssetCtxs", "dex": "xyz"})
+
+    def _find_asset_ctx(self, data, pair: str) -> dict | None:
+        """Find asset context for a pair from metaAndAssetCtxs response."""
+        if not data or not isinstance(data, list) or len(data) < 2:
+            return None
+
         pair_cfg = PAIRS.get(pair)
         if not pair_cfg:
             return None
 
         coin = pair_cfg["tradexyz"]
-        # Use metaAndAssetCtxs with dex parameter
-        data = await self._post_info({"type": "metaAndAssetCtxs", "dex": "xyz"})
-        if not data or not isinstance(data, list) or len(data) < 2:
-            return None
+        coin_name = coin.split(":")[-1] if ":" in coin else coin
 
         universe = data[0].get("universe", [])
         asset_ctxs = data[1]
 
-        coin_name = coin.split(":")[-1] if ":" in coin else coin
-
-        all_names = [meta.get("name", "") for meta in universe]
-        logger.info("trade.xyz universe names (first 20): %s", all_names[:20])
-
         for meta, ctx in zip(universe, asset_ctxs):
             name = meta.get("name", "").upper()
-            # Try full match (e.g. "CL"), then with prefix (e.g. "xyz:CL")
             if name == coin_name.upper() or name == coin.upper():
-                rate = float(ctx.get("funding", 0))
-                if pair in self._prices:
-                    self._prices[pair].funding_rate = rate
-                logger.info("trade.xyz funding %s: %s (matched name=%s)", pair, rate, meta.get("name"))
-                return rate
-
-        logger.warning(
-            "trade.xyz funding not found for %s (looking for '%s' or '%s' in %s)",
-            pair, coin_name, coin, all_names[:10],
-        )
+                return ctx
         return None
+
+    async def fetch_funding_rate(self, pair: str) -> Optional[float]:
+        data = await self._fetch_meta_data()
+        ctx = self._find_asset_ctx(data, pair)
+        if ctx is None:
+            return None
+
+        rate = float(ctx.get("funding", 0))
+        if pair in self._prices:
+            self._prices[pair].funding_rate = rate
+
+        # Also extract mark/index while we have the data
+        mark_px = float(ctx.get("markPx", 0))
+        oracle_px = float(ctx.get("oraclePx", 0))
+        if mark_px > 0 and oracle_px > 0:
+            self._mark_index[pair] = MarkIndexSnapshot(
+                exchange="tradexyz", pair=pair,
+                mark_price=mark_px, index_price=oracle_px,
+            )
+
+        logger.info("trade.xyz funding %s: %s, mark=$%.2f, index=$%.2f",
+                    pair, rate, mark_px, oracle_px)
+        return rate
+
+    async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
+        """Returns cached mark-index (updated during fetch_funding_rate)."""
+        # If no cached data, do a fresh fetch
+        if pair not in self._mark_index:
+            await self.fetch_funding_rate(pair)
+        return self._mark_index.get(pair)
 
     async def fetch_price_rest(self, pair: str) -> Optional[PriceSnapshot]:
         """REST fallback for fetching prices when WebSocket is unavailable."""

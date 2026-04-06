@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Callable
-from models.snapshots import PriceSnapshot
+from models.snapshots import PriceSnapshot, MarkIndexSnapshot
 
 
 class BaseExchangeClient(ABC):
@@ -25,6 +25,14 @@ class BaseExchangeClient(ABC):
     async def fetch_funding_rate(self, pair: str) -> Optional[float]:
         """Fetch the current funding rate for a pair via REST."""
         ...
+
+    async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
+        """Fetch mark price and index price for a pair via REST."""
+        return None
+
+    def get_latest_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
+        """Get cached mark-index snapshot."""
+        return getattr(self, '_mark_index', {}).get(pair)
 
     def set_on_price_update(self, callback: Callable[[str], None]):
         """Set callback to be invoked when a price update is received.

@@ -10,7 +10,7 @@ from typing import Optional
 
 from config import PAIRS, FUNDING_FETCH_INTERVAL
 from exchanges.base import BaseExchangeClient
-from models.snapshots import PriceSnapshot, SpreadSnapshot
+from models.snapshots import PriceSnapshot, SpreadSnapshot, MarkIndexSnapshot
 from user_store import UserStore
 from alerts.telegram_bot import TelegramAlertBot
 
@@ -36,6 +36,8 @@ class SpreadMonitor:
         # Key: (chat_id, pair), Value: direction at entry time
         self._active_entries: dict[tuple[int, str], str] = {}
         self._alert_queue: asyncio.Queue = asyncio.Queue()
+        self._mark_index_queue: asyncio.Queue = asyncio.Queue()
+        self._last_mark_index: dict[str, MarkIndexSnapshot] = {}  # "exchange:pair" -> snapshot
 
     def get_snapshot(self, pair: str) -> Optional[SpreadSnapshot]:
         """Build a SpreadSnapshot from cached prices (sync, for status queries)."""
@@ -55,6 +57,10 @@ class SpreadMonitor:
     async def get_snapshot_async(self, pair: str) -> Optional[SpreadSnapshot]:
         """Async wrapper for get_snapshot (used by Telegram bot)."""
         return self.get_snapshot(pair)
+
+    def get_mark_index(self, exchange: str, pair: str) -> Optional[MarkIndexSnapshot]:
+        key = f"{exchange}:{pair}"
+        return self._last_mark_index.get(key)
 
     # ── Event-Driven Price Update ──────────────────────────────
 
@@ -157,7 +163,65 @@ class SpreadMonitor:
                     )
                 except Exception as e:
                     logger.error("Funding fetch error for %s: %s", pair_name, e)
+
+                # Fetch mark-index prices (trade.xyz already extracted during funding fetch)
+                try:
+                    mi_results = await asyncio.gather(
+                        self.tradexyz.fetch_mark_index(pair_name),
+                        self.lighter.fetch_mark_index(pair_name),
+                        return_exceptions=True,
+                    )
+                    for mi in mi_results:
+                        if isinstance(mi, MarkIndexSnapshot) and mi.is_valid():
+                            key = f"{mi.exchange}:{mi.pair}"
+                            self._last_mark_index[key] = mi
+                            self._mark_index_queue.put_nowait(mi)
+                except Exception as e:
+                    logger.error("Mark-index fetch error for %s: %s", pair_name, e)
+
             await asyncio.sleep(FUNDING_FETCH_INTERVAL)
+
+    # ── Mark-Index Alert Processor ───────────────────────────────
+
+    async def run_mark_index_processor(self):
+        """Process mark-index queue: check user thresholds and send alerts."""
+        logger.info("Mark-index alert processor started")
+        while True:
+            snapshot = await self._mark_index_queue.get()
+            try:
+                await self._process_mark_index(snapshot)
+            except Exception as e:
+                logger.error("Error processing mark-index for %s/%s: %s",
+                            snapshot.exchange, snapshot.pair, e)
+
+    async def _process_mark_index(self, snapshot: MarkIndexSnapshot):
+        gap_pct = snapshot.gap_pct
+        pair = snapshot.pair
+        now = time.time()
+
+        users = await self.user_store.get_all_users()
+        for user in users:
+            mi = user.mark_index_settings.get(pair)
+            if not mi or mi.muted:
+                continue
+
+            time_since_last = now - mi.last_alert_time
+
+            # Check "above" threshold: gap exceeds threshold
+            if mi.above_threshold is not None and gap_pct > mi.above_threshold:
+                if time_since_last >= mi.cooldown:
+                    await self.telegram.send_mark_index_alert(
+                        user.chat_id, snapshot, "above", mi.above_threshold,
+                    )
+                    await self.user_store.update_mark_index_alert_time(user.chat_id, pair, now)
+
+            # Check "below" threshold: gap narrows below threshold
+            elif mi.below_threshold is not None and gap_pct < mi.below_threshold:
+                if time_since_last >= mi.cooldown:
+                    await self.telegram.send_mark_index_alert(
+                        user.chat_id, snapshot, "below", mi.below_threshold,
+                    )
+                    await self.user_store.update_mark_index_alert_time(user.chat_id, pair, now)
 
     # ── CSV Logging ────────────────────────────────────────────
 

@@ -35,6 +35,7 @@ async def main():
 
     # Wire up: Telegram bot can query live snapshots via monitor
     telegram.get_snapshot_fn = monitor.get_snapshot_async
+    telegram.get_mark_index_fn = monitor.get_mark_index
 
     # Wire up: exchange clients notify monitor on price updates
     tradexyz.set_on_price_update(monitor.on_price_update)
@@ -55,10 +56,11 @@ async def main():
             logger.info("All exchange connections established")
             await telegram.broadcast_startup()
 
-            # Run alert processor and funding fetcher concurrently
+            # Run alert processor, funding fetcher, and mark-index processor
             await asyncio.gather(
                 monitor.run_alert_processor(),
                 monitor.run_funding_fetcher(),
+                monitor.run_mark_index_processor(),
             )
 
         except (asyncio.CancelledError, KeyboardInterrupt):

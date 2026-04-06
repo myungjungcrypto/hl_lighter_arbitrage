@@ -11,7 +11,7 @@ from typing import Optional, Callable
 
 from config import LIGHTER_API_URL, PAIRS
 from exchanges.base import BaseExchangeClient
-from models.snapshots import PriceSnapshot
+from models.snapshots import PriceSnapshot, MarkIndexSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class LighterClient(BaseExchangeClient):
         self._marketid_to_pair: dict[str, str] = {}  # str(market_id) -> pair_name
         self._ws_client: lighter.WsClient | None = None
         self._ws_task: asyncio.Task | None = None
+        self._mark_index: dict[str, MarkIndexSnapshot] = {}
         self._running = False
         self._on_price_update: Callable[[str], None] | None = None
         self._api_client: ApiClient | None = None
@@ -223,4 +224,46 @@ class LighterClient(BaseExchangeClient):
                         return rate
         except Exception as e:
             logger.error("Lighter funding fetch error for %s: %s", pair, e)
+        return None
+
+    async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
+        """Fetch mark and index price from Lighter funding_rates endpoint."""
+        market_id = self._market_ids.get(pair)
+        if market_id is None or not self._api_client:
+            return None
+
+        try:
+            # Try fetching from order_book_details (has last_trade_price but not mark/index)
+            # Use funding_rates which has mark price info per exchange
+            # Alternatively, try direct REST for perpsMarketStats
+            import aiohttp
+            config = self._api_client.configuration
+            url = f"{config.host}/api/v1/perpsMarketStats"
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params={"market_id": market_id}) as resp:
+                    if resp.status != 200:
+                        logger.debug("Lighter perpsMarketStats HTTP %s", resp.status)
+                        return None
+                    data = await resp.json()
+
+                    # Response might be a single object or list
+                    stats = data if isinstance(data, dict) else data.get("perps_market_stats", data)
+                    if isinstance(stats, list):
+                        stats = stats[0] if stats else {}
+
+                    mark_px = float(stats.get("mark_price", 0))
+                    index_px = float(stats.get("index_price", 0))
+
+                    if mark_px > 0 and index_px > 0:
+                        snapshot = MarkIndexSnapshot(
+                            exchange="lighter", pair=pair,
+                            mark_price=mark_px, index_price=index_px,
+                        )
+                        self._mark_index[pair] = snapshot
+                        logger.info("Lighter mark-index %s: mark=$%.2f, index=$%.2f",
+                                   pair, mark_px, index_px)
+                        return snapshot
+        except Exception as e:
+            logger.error("Lighter mark-index fetch error for %s: %s", pair, e)
         return None
