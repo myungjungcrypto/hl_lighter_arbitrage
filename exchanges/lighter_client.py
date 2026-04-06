@@ -174,11 +174,12 @@ class LighterClient(BaseExchangeClient):
             if not isinstance(message, dict):
                 return
             msg_type = message.get("type", "")
+            channel = message.get("channel", "")
             # Handle perps_market_stats subscribe + update
-            if "perps_market_stats" in msg_type or "perps_market_stats" in message.get("channel", ""):
+            if "perps_market_stats" in msg_type or "perps_market_stats" in channel or "market_stats" in msg_type or "market_stats" in channel:
                 client_ref._handle_perps_market_stats(message)
             else:
-                logger.debug("Lighter WS unhandled: %s", msg_type)
+                logger.info("Lighter WS unhandled: type=%s channel=%s keys=%s", msg_type, channel, list(message.keys()))
 
         ws_client.handle_connected = patched_handle_connected
         ws_client.handle_connected_async = patched_handle_connected_async
