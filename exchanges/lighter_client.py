@@ -206,9 +206,16 @@ class LighterClient(BaseExchangeClient):
             funding_api = FundingApi(self._api_client)
             result = await funding_api.funding_rates()
             if result and result.funding_rates:
+                # Log full response structure once for debugging
+                if result.additional_properties:
+                    logger.info("Lighter funding-rates additional_properties: %s",
+                               list(result.additional_properties.keys()))
                 # Filter by market_id and exchange="lighter"
                 for fr in result.funding_rates:
                     if fr.market_id == market_id and fr.exchange == "lighter":
+                        # Check for mark/index in additional_properties
+                        if fr.additional_properties:
+                            logger.info("Lighter FR additional for %s: %s", pair, fr.additional_properties)
                         rate = float(fr.rate)
                         if pair in self._prices:
                             self._prices[pair].funding_rate = rate
@@ -243,6 +250,28 @@ class LighterClient(BaseExchangeClient):
 
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
+                # Strategy 0: Check funding-rates raw JSON for mark/index fields
+                url0 = f"{config.host}/api/v1/funding-rates"
+                async with session.get(url0) as resp:
+                    if resp.status == 200:
+                        raw = await resp.json()
+                        frs = raw.get("funding_rates", [])
+                        for fr in frs:
+                            if fr.get("market_id") == market_id:
+                                logger.info("Lighter funding-rates RAW for %s: %s", pair, fr)
+                                # Try extracting mark/index from raw response
+                                mark_px = float(fr.get("mark_price", 0))
+                                index_px = float(fr.get("index_price", 0))
+                                if mark_px > 0 and index_px > 0:
+                                    snapshot = MarkIndexSnapshot(
+                                        exchange="lighter", pair=pair,
+                                        mark_price=mark_px, index_price=index_px,
+                                    )
+                                    self._mark_index[pair] = snapshot
+                                    logger.info("Lighter mark-index %s from funding-rates!", pair)
+                                    return snapshot
+                                break
+
                 # Strategy 1: orderBookDetails - may have mark/index in response
                 url1 = f"{config.host}/api/v1/orderBookDetails"
                 async with session.get(url1, params={"market_id": market_id}) as resp:
