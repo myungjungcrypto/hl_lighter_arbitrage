@@ -97,27 +97,37 @@ class TradeXYZClient(BaseExchangeClient):
 
         channel = data.get("channel")
         if channel != "l2Book":
+            logger.debug("trade.xyz WS non-l2Book msg: channel=%s keys=%s", channel, list(data.keys()))
             return
 
         msg_data = data.get("data", {})
         coin = msg_data.get("coin", "")
         levels = msg_data.get("levels")
+
+        logger.debug("trade.xyz l2Book: coin=%s, has_levels=%s", coin, levels is not None)
+
         if not levels or len(levels) < 2:
+            logger.debug("trade.xyz l2Book no levels, data keys: %s", list(msg_data.keys()))
             return
 
         pair_name = self._coin_to_pair(coin)
         if not pair_name:
+            logger.debug("trade.xyz l2Book unknown coin: %s", coin)
             return
 
         bids = levels[0]
         asks = levels[1]
         if not bids or not asks:
+            logger.debug("trade.xyz empty bids/asks for %s", pair_name)
             return
 
         best_bid = float(bids[0].get("px", 0))
         best_ask = float(asks[0].get("px", 0))
         if best_bid == 0 or best_ask == 0:
+            logger.debug("trade.xyz zero price for %s: bid=%s ask=%s", pair_name, best_bid, best_ask)
             return
+
+        logger.info("trade.xyz price update: %s bid=$%.2f ask=$%.2f", pair_name, best_bid, best_ask)
 
         self._prices[pair_name] = PriceSnapshot(
             exchange="tradexyz",

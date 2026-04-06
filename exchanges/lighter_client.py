@@ -120,9 +120,12 @@ class LighterClient(BaseExchangeClient):
         try:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    logger.error("Lighter REST market discovery failed: HTTP %s", resp.status)
+                    body = await resp.text()
+                    logger.error("Lighter REST market discovery failed: HTTP %s, body=%s", resp.status, body[:200])
                     return
                 data = await resp.json()
+                all_symbols = [ob.get("symbol", "") for ob in data.get("order_book_details", [])]
+                logger.info("Lighter available markets: %s", all_symbols[:30])
                 for ob in data.get("order_book_details", []):
                     symbol = ob.get("symbol", "").upper()
                     market_id = ob.get("market_id")
