@@ -28,18 +28,18 @@ class UserStore:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            await db.execute("""
+            await db.execute(f"""
                 CREATE TABLE IF NOT EXISTS settings (
                     chat_id INTEGER NOT NULL,
                     pair TEXT NOT NULL,
-                    threshold REAL DEFAULT ?,
-                    cooldown INTEGER DEFAULT ?,
+                    threshold REAL DEFAULT {DEFAULT_THRESHOLD},
+                    cooldown INTEGER DEFAULT {DEFAULT_COOLDOWN},
                     muted INTEGER DEFAULT 0,
                     last_alert_time REAL DEFAULT 0.0,
                     PRIMARY KEY (chat_id, pair),
                     FOREIGN KEY (chat_id) REFERENCES users(chat_id)
                 )
-            """, (DEFAULT_THRESHOLD, DEFAULT_COOLDOWN))
+            """)
             await db.commit()
         logger.info("UserStore initialized: %s", self.db_path)
 
