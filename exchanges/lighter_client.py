@@ -206,16 +206,9 @@ class LighterClient(BaseExchangeClient):
             funding_api = FundingApi(self._api_client)
             result = await funding_api.funding_rates()
             if result and result.funding_rates:
-                # Log full response structure once for debugging
-                if result.additional_properties:
-                    logger.info("Lighter funding-rates additional_properties: %s",
-                               list(result.additional_properties.keys()))
                 # Filter by market_id and exchange="lighter"
                 for fr in result.funding_rates:
                     if fr.market_id == market_id and fr.exchange == "lighter":
-                        # Check for mark/index in additional_properties
-                        if fr.additional_properties:
-                            logger.info("Lighter FR additional for %s: %s", pair, fr.additional_properties)
                         rate = float(fr.rate)
                         if pair in self._prices:
                             self._prices[pair].funding_rate = rate
@@ -234,93 +227,7 @@ class LighterClient(BaseExchangeClient):
         return None
 
     async def fetch_mark_index(self, pair: str) -> Optional[MarkIndexSnapshot]:
-        """Fetch mark and index price from Lighter.
-
-        Strategy:
-        1. Try /api/v1/orderBookDetails with market_id and check additional_properties
-        2. Try /api/v1/perpsMarketStats endpoint
-        """
-        market_id = self._market_ids.get(pair)
-        if market_id is None or not self._api_client:
-            return None
-
-        import aiohttp
-        config = self._api_client.configuration
-        timeout = aiohttp.ClientTimeout(total=10)
-
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                # Strategy 0: Check funding-rates raw JSON for mark/index fields
-                url0 = f"{config.host}/api/v1/funding-rates"
-                async with session.get(url0) as resp:
-                    if resp.status == 200:
-                        raw = await resp.json()
-                        frs = raw.get("funding_rates", [])
-                        for fr in frs:
-                            if fr.get("market_id") == market_id:
-                                logger.info("Lighter funding-rates RAW for %s: %s", pair, fr)
-                                # Try extracting mark/index from raw response
-                                mark_px = float(fr.get("mark_price", 0))
-                                index_px = float(fr.get("index_price", 0))
-                                if mark_px > 0 and index_px > 0:
-                                    snapshot = MarkIndexSnapshot(
-                                        exchange="lighter", pair=pair,
-                                        mark_price=mark_px, index_price=index_px,
-                                    )
-                                    self._mark_index[pair] = snapshot
-                                    logger.info("Lighter mark-index %s from funding-rates!", pair)
-                                    return snapshot
-                                break
-
-                # Strategy 1: orderBookDetails - may have mark/index in response
-                url1 = f"{config.host}/api/v1/orderBookDetails"
-                async with session.get(url1, params={"market_id": market_id}) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        details = data.get("order_book_details", [])
-                        for d in details:
-                            if d.get("market_id") == market_id:
-                                mark_px = float(d.get("mark_price", 0))
-                                index_px = float(d.get("index_price", 0))
-                                if mark_px > 0 and index_px > 0:
-                                    snapshot = MarkIndexSnapshot(
-                                        exchange="lighter", pair=pair,
-                                        mark_price=mark_px, index_price=index_px,
-                                    )
-                                    self._mark_index[pair] = snapshot
-                                    logger.info("Lighter mark-index %s: mark=$%.2f, index=$%.2f",
-                                               pair, mark_px, index_px)
-                                    return snapshot
-                                # Log available keys for debugging
-                                logger.info("Lighter orderBookDetails keys for %s: %s",
-                                            pair, list(d.keys()))
-
-                # Strategy 2: perpsMarketStats
-                for endpoint in ["/api/v1/perpsMarketStats", "/api/v1/marketStats"]:
-                    url2 = f"{config.host}{endpoint}"
-                    async with session.get(url2, params={"market_id": market_id}) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            stats = data if isinstance(data, dict) else {}
-                            # Try various response structures
-                            for key in ["perps_market_stats", "market_stats", ""]:
-                                container = stats.get(key, stats) if key else stats
-                                if isinstance(container, list):
-                                    container = container[0] if container else {}
-                                mark_px = float(container.get("mark_price", 0))
-                                index_px = float(container.get("index_price", 0))
-                                if mark_px > 0 and index_px > 0:
-                                    snapshot = MarkIndexSnapshot(
-                                        exchange="lighter", pair=pair,
-                                        mark_price=mark_px, index_price=index_px,
-                                    )
-                                    self._mark_index[pair] = snapshot
-                                    logger.info("Lighter mark-index %s (via %s): mark=$%.2f, index=$%.2f",
-                                               pair, endpoint, mark_px, index_px)
-                                    return snapshot
-                        else:
-                            logger.info("Lighter %s HTTP %s", endpoint, resp.status)
-
-        except Exception as e:
-            logger.error("Lighter mark-index fetch error for %s: %s", pair, e)
+        """Lighter public API does not expose mark/index prices."""
+        # Lighter's perpsMarketStats endpoint requires auth (403).
+        # funding-rates and orderBookDetails don't include mark/index.
         return None
