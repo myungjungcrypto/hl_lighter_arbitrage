@@ -13,9 +13,9 @@ TRADEXYZ_WS_URL = os.getenv("TRADEXYZ_WS_URL", "wss://api.hyperliquid.xyz/ws")
 LIGHTER_API_URL = os.getenv("LIGHTER_API_URL", "https://mainnet.zklighter.elliot.ai")
 
 # Trading Pairs: {internal_name: (tradexyz_symbol, lighter_symbol)}
-# Note: BRENT is NOT available on Lighter.xyz (only WTI, XAU, XAG for RWA)
 PAIRS = {
     "WTI": {"tradexyz": "xyz:CL", "lighter": "WTI"},
+    "BRENT": {"tradexyz": "xyz:BRENTOIL", "lighter": "BRENTOIL"},
 }
 
 # Alert Defaults
