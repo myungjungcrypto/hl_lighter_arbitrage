@@ -436,17 +436,16 @@ def _mark_index_status_lines(pair_name: str, user, get_mark_index_fn) -> str:
     lines = []
     lines.append(f"\n  <b>Mark vs Index:</b>")
 
-    # trade.xyz mark/index
-    mi = get_mark_index_fn("tradexyz", pair_name) if get_mark_index_fn else None
-    if mi and mi.is_valid():
-        lines.append(
-            f"    trade.xyz: mark ${mi.mark_price:.2f} / index ${mi.index_price:.2f} "
-            f"(갭 {mi.gap_signed_pct:+.3f}%)"
-        )
-    else:
-        lines.append(f"    trade.xyz: 데이터 없음")
-    # Lighter: public API doesn't expose mark/index
-    lines.append(f"    Lighter: 미지원 (공개 API 없음)")
+    for exchange in ("tradexyz", "lighter"):
+        label = "trade.xyz" if exchange == "tradexyz" else "Lighter"
+        mi = get_mark_index_fn(exchange, pair_name) if get_mark_index_fn else None
+        if mi and mi.is_valid():
+            lines.append(
+                f"    {label}: mark ${mi.mark_price:.2f} / index ${mi.index_price:.2f} "
+                f"(갭 {mi.gap_signed_pct:+.3f}%)"
+            )
+        else:
+            lines.append(f"    {label}: 데이터 없음")
 
     # Show settings
     mute_icon = "🔇" if mi_settings.muted else ""
