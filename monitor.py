@@ -172,10 +172,14 @@ class SpreadMonitor:
                         return_exceptions=True,
                     )
                     for mi in mi_results:
-                        if isinstance(mi, MarkIndexSnapshot) and mi.is_valid():
+                        if isinstance(mi, Exception):
+                            logger.error("Mark-index fetch exception for %s: %s", pair_name, mi)
+                        elif isinstance(mi, MarkIndexSnapshot) and mi.is_valid():
                             key = f"{mi.exchange}:{mi.pair}"
                             self._last_mark_index[key] = mi
                             self._mark_index_queue.put_nowait(mi)
+                        elif mi is not None:
+                            logger.warning("Mark-index invalid for %s: %s", pair_name, mi)
                 except Exception as e:
                     logger.error("Mark-index fetch error for %s: %s", pair_name, e)
 
