@@ -32,6 +32,9 @@ class SpreadMonitor:
         self.user_store = user_store
         self.telegram = telegram
         self._last_direction: dict[str, str] = {}  # pair -> direction
+        # Track which (user, pair) combos have an active entry position
+        # Key: (chat_id, pair), Value: direction at entry time
+        self._active_entries: dict[tuple[int, str], str] = {}
         self._alert_queue: asyncio.Queue = asyncio.Queue()
 
     def get_snapshot(self, pair: str) -> Optional[SpreadSnapshot]:
@@ -78,7 +81,12 @@ class SpreadMonitor:
                 logger.error("Error processing snapshot for %s: %s", snapshot.pair, e)
 
     async def _process_snapshot(self, snapshot: SpreadSnapshot):
-        """Evaluate snapshot against all users' settings and send alerts."""
+        """Evaluate snapshot against all users' settings and send alerts.
+
+        Alert logic:
+        1. Entry alert: spread exceeds user threshold → send entry alert, mark position active
+        2. Exit alert: direction reverses ONLY IF user has an active entry → send exit alert, clear position
+        """
         pair = snapshot.pair
         direction = snapshot.best_direction
         now = time.time()
@@ -86,14 +94,7 @@ class SpreadMonitor:
         # Log to CSV
         self._log_csv(snapshot)
 
-        # Ignore direction changes when spread is too small (noise zone)
-        MIN_SPREAD_FOR_DIRECTION = 0.05  # $0.05 minimum to track direction
-        if abs(snapshot.best_spread) < MIN_SPREAD_FOR_DIRECTION:
-            return
-
-        # Check for direction reversal (exit signal)
-        prev_direction = self._last_direction.get(pair)
-        is_reversal = prev_direction is not None and prev_direction != direction
+        # Track direction
         self._last_direction[pair] = direction
 
         # Get all users and check alert conditions
@@ -106,19 +107,29 @@ class SpreadMonitor:
             if pair_settings.muted:
                 continue
 
+            key = (user.chat_id, pair)
             time_since_last = now - pair_settings.last_alert_time
 
-            # Direction reversal → exit alert (with 60s minimum cooldown)
-            if is_reversal and time_since_last >= 60:
+            # Check if user has active entry for this pair
+            active_direction = self._active_entries.get(key)
+
+            # Exit alert: direction reversed AND user had an active entry
+            if active_direction is not None and active_direction != direction:
                 await self.telegram.send_alert(user.chat_id, snapshot, alert_type="exit")
                 await self.user_store.update_last_alert_time(user.chat_id, pair, now)
+                del self._active_entries[key]  # Clear active position
+                logger.info("Exit alert sent for %s to %d (was %s, now %s)",
+                           pair, user.chat_id, active_direction, direction)
                 continue
 
-            # Entry alert: check threshold and cooldown
+            # Entry alert: spread exceeds threshold + cooldown elapsed
             if abs(snapshot.best_spread) >= pair_settings.threshold:
                 if time_since_last >= user.cooldown:
                     await self.telegram.send_alert(user.chat_id, snapshot, alert_type="entry")
                     await self.user_store.update_last_alert_time(user.chat_id, pair, now)
+                    self._active_entries[key] = direction  # Mark entry active
+                    logger.info("Entry alert sent for %s to %d (direction=%s, spread=$%.2f)",
+                               pair, user.chat_id, direction, snapshot.best_spread)
 
     # ── Funding Rate Fetcher ───────────────────────────────────
 
