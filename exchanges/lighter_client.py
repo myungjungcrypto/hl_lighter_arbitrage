@@ -180,8 +180,6 @@ class LighterClient(BaseExchangeClient):
             for ch in channel_candidates:
                 await ws.send(_json.dumps({"type": "subscribe", "channel": ch}))
             logger.info("Lighter WS trying channels: %s", channel_candidates)
-                }))
-            logger.info("Lighter WS subscribed to perps_market_stats for %s", market_ids)
 
         def patched_handle_unhandled(message):
             if not isinstance(message, dict):
