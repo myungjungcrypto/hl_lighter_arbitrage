@@ -205,15 +205,16 @@ class LighterClient(BaseExchangeClient):
                 # Filter by market_id and exchange="lighter"
                 for fr in result.funding_rates:
                     if fr.market_id == market_id and fr.exchange == "lighter":
-                        rate = float(fr.rate)
+                        # Lighter returns 8-hour funding rate, convert to 1-hour
+                        rate = float(fr.rate) / 8
                         if pair in self._prices:
                             self._prices[pair].funding_rate = rate
-                        logger.debug("Lighter funding %s: %s", pair, rate)
+                        logger.debug("Lighter funding %s: %s (8h=%s)", pair, rate, fr.rate)
                         return rate
                 # Fallback: any exchange for this market_id
                 for fr in result.funding_rates:
                     if fr.market_id == market_id:
-                        rate = float(fr.rate)
+                        rate = float(fr.rate) / 8
                         if pair in self._prices:
                             self._prices[pair].funding_rate = rate
                         logger.debug("Lighter funding %s (exchange=%s): %s", pair, fr.exchange, rate)
