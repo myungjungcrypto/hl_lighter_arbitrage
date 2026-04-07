@@ -46,6 +46,7 @@ class TelegramAlertBot:
         self._app.add_handler(CommandHandler("mute", self._cmd_mute))
         self._app.add_handler(CommandHandler("unmute", self._cmd_unmute))
         self._app.add_handler(CommandHandler("mi", self._cmd_mi))
+        self._app.add_handler(CommandHandler("mi_cooldown", self._cmd_mi_cooldown))
         self._app.add_handler(CommandHandler("mi_mute", self._cmd_mi_mute))
         self._app.add_handler(CommandHandler("mi_unmute", self._cmd_mi_unmute))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
@@ -249,6 +250,34 @@ class TelegramAlertBot:
                     f"📉 {pair} Mark-Index 알림: 갭 < {value}% 시 알림"
                 )
 
+    async def _cmd_mi_cooldown(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set mark-index cooldown per pair: /mi_cooldown <pair> <seconds>"""
+        chat_id = update.effective_chat.id
+        args = context.args
+
+        if not args or len(args) < 2:
+            await update.message.reply_text(
+                "사용법: /mi_cooldown &lt;pair&gt; &lt;seconds&gt;\n"
+                "예: /mi_cooldown WTI 180\n\n"
+                f"가능한 페어: {', '.join(PAIRS.keys())}",
+                parse_mode="HTML",
+            )
+            return
+
+        pair = args[0].upper()
+        if pair not in PAIRS:
+            await update.message.reply_text(f"잘못된 페어: {pair}. 가능: {', '.join(PAIRS.keys())}")
+            return
+
+        try:
+            seconds = int(args[1])
+        except ValueError:
+            await update.message.reply_text("쿨다운은 정수(초)여야 합니다.")
+            return
+
+        await self.user_store.set_mark_index_cooldown(chat_id, pair, seconds)
+        await update.message.reply_text(f"⏱ {pair} Mark-Index 알림 쿨다운: {seconds}초")
+
     async def _cmd_mi_mute(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         args = context.args
@@ -305,6 +334,8 @@ class TelegramAlertBot:
             "  예: /mi WTI above 0.3 — 갭 &gt; 0.3% 시 알림\n"
             "  예: /mi BRENT below 0.2 — 갭 &lt; 0.2% 시 알림\n"
             "  예: /mi WTI above off — 해당 방향 비활성화\n"
+            "/mi_cooldown &lt;pair&gt; &lt;초&gt; — Mark-Index 쿨다운 설정\n"
+            "  예: /mi_cooldown WTI 180\n"
             "/mi_mute &lt;pair&gt; — Mark-Index 알림 끄기\n"
             "/mi_unmute &lt;pair&gt; — Mark-Index 알림 켜기\n\n"
             "/help — 이 도움말\n\n"
@@ -450,6 +481,6 @@ def _mark_index_status_lines(pair_name: str, user, get_mark_index_fn) -> str:
     mute_icon = "🔇" if mi_settings.muted else ""
     above_str = f"above {mi_settings.above_threshold}% ON" if mi_settings.above_threshold is not None else "above: OFF"
     below_str = f"below {mi_settings.below_threshold}% ON" if mi_settings.below_threshold is not None else "below: OFF"
-    lines.append(f"    설정: {above_str} | {below_str} {mute_icon}")
+    lines.append(f"    설정: {above_str} | {below_str} | 쿨다운: {mi_settings.cooldown}s {mute_icon}")
 
     return "\n".join(lines)
